@@ -45,7 +45,8 @@ export function ShopDialog({
   availableLocales,
   onSaved,
 }: ShopDialogProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const currentLang = i18n.language;
   const localeId = useLocaleId();
   const [shopTypes, setShopTypes] = useState<ShopType[]>([]);
   const [shopTypesLoading, setShopTypesLoading] = useState(false);
