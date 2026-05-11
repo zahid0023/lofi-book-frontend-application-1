@@ -19,7 +19,7 @@ import { shopsApi, type Shop } from "@/services/shops";
 export default function ShopsPage() {
   const router = useRouter();
   const { t } = useTranslation();
-  const [hasToken] = useState(() => !!getToken());
+  const [hasToken, setHasToken] = useState(false);
   const [loading, setLoading] = useState(true);
   const [shops, setShops] = useState<Shop[]>([]);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -28,16 +28,18 @@ export default function ShopsPage() {
   const [form, setForm] = useState<ShopFormState>(emptyShopForm);
 
   useEffect(() => {
-    if (!hasToken) {
+    const token = !!getToken();
+    if (!token) {
       router.replace("/login");
       return;
     }
+    setHasToken(true);
     shopsApi
       .list({ size: 50 })
       .then((res) => setShops(res.data))
       .catch((err: Error) => toast.error(err.message))
       .finally(() => setLoading(false));
-  }, [hasToken, router]);
+  }, [router]);
 
   const openCreate = () => {
     setActiveShopId(undefined);
