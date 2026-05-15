@@ -50,7 +50,7 @@ export default function ShopsPage() {
 
   const openFor = (shop: Shop, mode: ShopDialogMode) => {
     setActiveShopId(shop.id);
-    setForm({ code: shop.code, shop_type_id: shop.shop_type?.id ?? "", sort_order: shop.sort_order, locales: [] });
+    setForm({ code: shop.code, shop_type_id: shop.shop_type?.id ?? "", sort_order: shop.sort_order, locales: [], inventories: [] });
     setDialogMode(mode);
     setDialogOpen(true);
   };

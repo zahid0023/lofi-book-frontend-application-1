@@ -33,13 +33,32 @@ export interface ShopItemCategoryLocale {
   sort_order: number;
 }
 
+export interface ShopItemSummary {
+  id: number;
+  shop_id: number;
+  platform_item_id?: number | null;
+  code: string;
+  is_custom: boolean;
+  sort_order: number;
+  shop_item_locales?: Array<{
+    id: number;
+    locale_id: number;
+    name: string;
+    description: string;
+    sort_order: number;
+  }>;
+}
+
 export interface ShopItemCategory {
   id: number;
+  shop_id?: number;
   code: string;
   platform_category_id: number;
   parent_id?: number | null;
   sort_order: number;
-  shop_item_category_locales?: ShopItemCategoryLocale[];
+  locales?: ShopItemCategoryLocale[];
+  sub_categories?: ShopItemCategory[];
+  shop_items?: ShopItemSummary[];
 }
 
 export interface ListShopItemCategoriesParams {
@@ -111,6 +130,16 @@ export const itemCategoriesApi = {
     delete: (shopId: number, categoryId: number, id: number) =>
       api.delete<MutationResponse>(
         `/shops/${shopId}/item-categories/${categoryId}/locales/${id}`,
+      ),
+  },
+
+  items: {
+    assign: (shopId: number, categoryId: number, body: { shop_item_id: number; sort_order: number }) =>
+      api.post<MutationResponse>(`/shops/${shopId}/item-categories/${categoryId}`, body),
+
+    unassign: (shopId: number, categoryId: number, shopItemId: number) =>
+      api.delete<MutationResponse>(
+        `/shops/${shopId}/item-categories/${categoryId}/${shopItemId}`,
       ),
   },
 };

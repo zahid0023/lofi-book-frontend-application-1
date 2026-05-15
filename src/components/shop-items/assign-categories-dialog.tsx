@@ -50,7 +50,7 @@ export function AssignCategoriesDialog({ open, onOpenChange, shopId, item }: Pro
   if (!item) return null;
 
   const localized = (c: ShopItemCategory) => {
-    const list = c.shop_item_category_locales ?? [];
+    const list = c.locales ?? [];
     return (
       list.find((l) => l.locale_id === localeId)?.name ||
       list[0]?.name ||

@@ -15,6 +15,13 @@ export interface ShopItemVariantInput {
   sku?: string;
   barcode?: string;
   quantity_value: number;
+  shop_inventory_items?: Record<string, {
+    available_quantity: number;
+    reserved_quantity: number;
+    damaged_quantity: number;
+    reorder_level?: number | null;
+    max_stock_level?: number | null;
+  }>;
 }
 
 export interface CreateShopItemRequest {
@@ -51,6 +58,16 @@ export interface ShopItem {
   shop_item_locales?: ShopItemLocale[];
 }
 
+export interface ShopItemVariant {
+  id: number;
+  shop_item_id: number;
+  code: string;
+  sort_order: number;
+  quantity_value: number;
+  sku?: string | null;
+  barcode?: string | null;
+}
+
 function buildQuery(params: Record<string, unknown> = {}): string {
   const qs = Object.entries(params)
     .filter(([, v]) => v !== undefined && v !== null && v !== "")
@@ -76,6 +93,13 @@ export const shopItemsApi = {
 
   delete: (shopId: number, id: number) =>
     api.delete<MutationResponse>(`/shops/${shopId}/items/${id}`),
+
+  variants: {
+    list: (shopId: number, itemId: number, params: Record<string, unknown> = {}) =>
+      api.get<PageResponse<ShopItemVariant>>(
+        `/shops/${shopId}/items/${itemId}/variants${buildQuery(params)}`,
+      ),
+  },
 
   locales: {
     list: (shopId: number, itemId: number, params: Record<string, unknown> = {}) =>

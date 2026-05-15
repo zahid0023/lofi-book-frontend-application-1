@@ -1,4 +1,4 @@
-import { Pencil, Trash2, Eye, FolderTree, Package } from "lucide-react";
+import { Pencil, Trash2, Eye, FolderTree, Package, Loader2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,7 @@ export interface ShopItemCategoryCardProps {
   defaultDescription?: string;
   parentLabel?: string;
   subCount?: number;
+  overviewLoading?: boolean;
   onView?: (cat: ShopItemCategory) => void;
   onEdit?: (cat: ShopItemCategory) => void;
   onDelete?: (cat: ShopItemCategory) => void;
@@ -24,6 +25,7 @@ export function ShopItemCategoryCard({
   defaultDescription,
   parentLabel,
   subCount,
+  overviewLoading,
   onView,
   onEdit,
   onDelete,
@@ -34,12 +36,12 @@ export function ShopItemCategoryCard({
   const title =
     defaultName?.trim() || category.code || `Category #${category.id}`;
   const subtitle = `${category.code} · ID #${category.id}`;
-  const localeCount = category.shop_item_category_locales?.length ?? 0;
-  const clickable = !!onOpenOverview;
+  const localeCount = category.locales?.length ?? 0;
+  const clickable = !!onOpenOverview && !overviewLoading;
 
   return (
     <Card
-      onClick={() => onOpenOverview?.(category)}
+      onClick={() => !overviewLoading && onOpenOverview?.(category)}
       role={clickable ? "button" : undefined}
       tabIndex={clickable ? 0 : undefined}
       onKeyDown={(e) => {
@@ -59,7 +61,9 @@ export function ShopItemCategoryCard({
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
           <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-fuchsia-500 via-indigo-500 to-cyan-400 text-white shadow-md">
-            <FolderTree className="h-5 w-5" />
+            {overviewLoading
+              ? <Loader2 className="h-5 w-5 animate-spin" />
+              : <FolderTree className="h-5 w-5" />}
           </div>
           <div className="min-w-0 space-y-0.5">
             <h3 className="truncate text-base font-semibold leading-tight">

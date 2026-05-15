@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { Languages, Loader2, Pencil, Plus, X } from "lucide-react";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
@@ -88,10 +88,15 @@ export function ShopItemCategoryDialog({
   const [availableLocales, setAvailableLocales] = useState<Locale[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [localesLoading, setLocalesLoading] = useState(false);
+  const codeTouched = useRef(false);
 
   const isView = mode === "view";
   const isEdit = mode === "edit";
   const fieldsDisabled = isView || submitting;
+
+  useEffect(() => {
+    if (open && mode === "create") codeTouched.current = false;
+  }, [open, mode]);
 
   // Fetch available locales and platform categories once on open
   useEffect(() => {
@@ -114,9 +119,9 @@ export function ShopItemCategoryDialog({
       setParentId(initial.parent_id ?? null);
       setSortOrder(initial.sort_order);
       // Pre-fill locale rows from embedded locales or fetch from API
-      if (initial.shop_item_category_locales?.length) {
+      if (initial.locales?.length) {
         setLocaleRows(
-          initial.shop_item_category_locales.map((l) => ({
+          initial.locales.map((l) => ({
             id: l.id,
             locale_id: l.locale_id,
             name: l.name,
@@ -149,13 +154,15 @@ export function ShopItemCategoryDialog({
     }
   }, [open, mode, initial?.id, presetParentId]);
 
-  // Auto-fill locale rows from the selected platform category (create mode only)
+  // Auto-fill code + locale rows from the selected platform category (create mode only)
   useEffect(() => {
     if (mode !== "create" || !platformCategoryId) return;
     platformItemCategoriesApi
       .get(platformCategoryId)
       .then((res) => {
-        const locs = res.platform_item_category.platform_item_category_locales ?? [];
+        const cat = res.platform_item_category;
+        if (!codeTouched.current) setCode(cat.code);
+        const locs = cat.platform_item_category_locales ?? [];
         if (locs.length > 0) {
           setLocaleRows(
             locs.map((l, idx) => ({
@@ -175,8 +182,8 @@ export function ShopItemCategoryDialog({
     if (!pid) return t("itemCategory.noParent");
     const cat = categories.find((c) => c.id === pid);
     if (!cat) return `#${pid}`;
-    const loc = cat.shop_item_category_locales?.find((l) => l.locale_id === localeId);
-    return loc?.name ?? cat.shop_item_category_locales?.[0]?.name ?? cat.code;
+    const loc = cat.locales?.find((l) => l.locale_id === localeId);
+    return loc?.name ?? cat.locales?.[0]?.name ?? cat.code;
   };
 
   const updateRow = (i: number, patch: Partial<LocaleRow>) =>
@@ -236,7 +243,7 @@ export function ShopItemCategoryDialog({
           platform_category_id: platformCategoryId!,
           parent_id: parentId,
           sort_order: sortOrder,
-          shop_item_category_locales: localeRows.map((r, idx) => ({
+          locales: localeRows.map((r, idx) => ({
             id: r.id ?? 0,
             locale_id: r.locale_id as number,
             name: r.name.trim(),
@@ -266,7 +273,7 @@ export function ShopItemCategoryDialog({
           platform_category_id: platformCategoryId!,
           parent_id: parentId,
           sort_order: sortOrder,
-          shop_item_category_locales: localeRows.map((r, idx) => ({
+          locales: localeRows.map((r, idx) => ({
             id: 0,
             locale_id: r.locale_id as number,
             name: r.name.trim(),
@@ -306,7 +313,10 @@ export function ShopItemCategoryDialog({
             <Label>{t("itemCategory.code")}</Label>
             <Input
               value={code}
-              onChange={(e) => setCode(e.target.value.toUpperCase())}
+              onChange={(e) => {
+                codeTouched.current = true;
+                setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ""));
+              }}
               disabled={fieldsDisabled || isEdit}
               placeholder="E.g. BEVERAGES"
               maxLength={50}
@@ -341,8 +351,8 @@ export function ShopItemCategoryDialog({
                 {categories
                   .filter((c) => c.id !== initial?.id)
                   .map((c) => {
-                    const loc = c.shop_item_category_locales?.find((l) => l.locale_id === localeId);
-                    const label = loc?.name ?? c.shop_item_category_locales?.[0]?.name ?? c.code;
+                    const loc = c.locales?.find((l) => l.locale_id === localeId);
+                    const label = loc?.name ?? c.locales?.[0]?.name ?? c.code;
                     return (
                       <SelectItem key={c.id} value={String(c.id)}>
                         {label} <span className="text-muted-foreground">({c.code})</span>

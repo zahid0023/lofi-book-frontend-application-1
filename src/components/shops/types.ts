@@ -27,11 +27,24 @@ export interface ShopLocaleRow {
   _new?: boolean;
 }
 
+export interface InventoryLocaleRow {
+  locale_id: number | "";
+  name: string;
+  description: string;
+  sort_order: number;
+}
+
+export interface InventoryRow {
+  code: string;
+  locales: InventoryLocaleRow[];
+}
+
 export interface ShopFormState {
   code: string;
   shop_type_id: number | "";
   sort_order: number;
   locales: ShopLocaleRow[];
+  inventories: InventoryRow[];
 }
 
 export const emptyShopForm: ShopFormState = {
@@ -39,6 +52,7 @@ export const emptyShopForm: ShopFormState = {
   shop_type_id: "",
   sort_order: 1,
   locales: [],
+  inventories: [{ code: "MAIN_INVENTORY", locales: [] }],
 };
 
 export interface ShopDialogProps {

@@ -11,6 +11,7 @@ import {
   LayoutTemplateIcon,
   LogOut,
   SettingsIcon,
+  Warehouse,
   ZapIcon,
 } from "lucide-react";
 import Link from "next/link";
@@ -43,6 +44,10 @@ export function PortalSidebar({ shopId }: { shopId: string }) {
     { title: "Items", url: `/shops/${shopId}/items`, icon: SettingsIcon },
   ];
 
+  const inventoryNavItems = [
+    { title: "Inventory", url: `/shops/${shopId}/inventory`, icon: Warehouse },
+  ];
+
   const commonNavItems = [
     { title: "Countries", url: `/shops/${shopId}/countries`, icon: GlobeIcon },
     { title: "Cities", url: `/shops/${shopId}/cities`, icon: GlobeIcon },
@@ -56,11 +61,11 @@ export function PortalSidebar({ shopId }: { shopId: string }) {
   return (
     <Sidebar collapsible="icon">
       <SidebarHeader className="h-14 justify-center border-b border-b-sidebar-border">
-        <Link href="/" className="flex items-center gap-2">
+        <Link href="/shops" className="flex items-center gap-2">
           <div className="flex aspect-square size-8 items-center justify-center">
             <ZapIcon className="size-5 text-primary" />
           </div>
-          <span className="truncate font-medium">Resort</span>
+          <span className="truncate font-medium">Shops</span>
           <SidebarTrigger className="ml-auto sm:hidden" />
         </Link>
       </SidebarHeader>
@@ -87,6 +92,23 @@ export function PortalSidebar({ shopId }: { shopId: string }) {
             <SidebarGroupLabel>Items</SidebarGroupLabel>
             <SidebarMenu className="gap-2">
               {itemNavItems.map((item) => (
+                <SidebarMenuItem key={item.title}>
+                  <SidebarMenuButtonActive
+                    icon={<item.icon />}
+                    title={item.title}
+                    url={item.url}
+                  />
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        <SidebarGroup>
+          <SidebarGroupContent>
+            <SidebarGroupLabel>Inventory</SidebarGroupLabel>
+            <SidebarMenu className="gap-2">
+              {inventoryNavItems.map((item) => (
                 <SidebarMenuItem key={item.title}>
                   <SidebarMenuButtonActive
                     icon={<item.icon />}

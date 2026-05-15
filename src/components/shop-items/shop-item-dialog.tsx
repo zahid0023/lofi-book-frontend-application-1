@@ -1,7 +1,7 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
-import { Languages, Loader2, Package, Pencil, Plus, X } from "lucide-react";
+import { FormEvent, useEffect, useRef, useState } from "react";
+import { Languages, Loader2, Package, Pencil, Plus, Warehouse, X } from "lucide-react";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
@@ -33,6 +33,7 @@ import {
 } from "@/services/shop-items";
 import { localesApi, type Locale } from "@/services/locales";
 import { platformItemsApi } from "@/services/platform-items";
+import { shopInventoriesApi, type ShopInventory } from "@/services/shop-inventories";
 import { PlatformItemSelect } from "./platform-item-select";
 
 export type ItemDialogMode = "create" | "edit" | "view";
@@ -46,12 +47,21 @@ interface LocaleRow {
   _new?: boolean;
 }
 
+type InvStock = Record<number, {
+  availableQuantity: string;
+  reservedQuantity: string;
+  damagedQuantity: string;
+  reorderLevel: string;
+  maxStockLevel: string;
+}>;
+
 interface VariantRow {
   code: string;
   sort_order: number;
   sku: string;
   barcode: string;
   quantity_value: string;
+  invSettings: InvStock;
 }
 
 interface Props {
@@ -64,7 +74,7 @@ interface Props {
   onSaved: (saved: ShopItem) => void;
 }
 
-const emptyRow = (n: number): LocaleRow => ({
+const emptyLocaleRow = (n: number): LocaleRow => ({
   locale_id: "",
   name: "",
   description: "",
@@ -72,13 +82,13 @@ const emptyRow = (n: number): LocaleRow => ({
   _new: true,
 });
 
-const emptyVariantRow = (n: number): VariantRow => ({
-  code: "",
-  sort_order: n + 1,
-  sku: "",
-  barcode: "",
-  quantity_value: "",
-});
+function makeEmptyVariantRow(n: number, inventories: ShopInventory[]): VariantRow {
+  const invSettings: InvStock = {};
+  inventories.forEach((inv) => {
+    invSettings[inv.id] = { availableQuantity: "0", reservedQuantity: "0", damagedQuantity: "0", reorderLevel: "-1", maxStockLevel: "-1" };
+  });
+  return { code: "", sort_order: n + 1, sku: "", barcode: "", quantity_value: "", invSettings };
+}
 
 export function ShopItemDialog({
   open,
@@ -101,6 +111,10 @@ export function ShopItemDialog({
   const [submitting, setSubmitting] = useState(false);
   const [localesLoading, setLocalesLoading] = useState(false);
   const [variantsLoading, setVariantsLoading] = useState(false);
+  const [inventories, setInventories] = useState<ShopInventory[]>([]);
+
+  // Always-fresh ref so async effects/callbacks can read latest inventories
+  const inventoriesRef = useRef<ShopInventory[]>([]);
 
   const isView = mode === "view";
   const isEdit = mode === "edit";
@@ -115,6 +129,31 @@ export function ShopItemDialog({
       .catch((err: Error) => toast.error(err.message))
       .finally(() => setLocalesLoading(false));
   }, [open]);
+
+  useEffect(() => {
+    if (!open || mode !== "create") return;
+    shopInventoriesApi
+      .list(shopId, { size: 50, sort_by: "id", sort_dir: "asc" })
+      .then((res) => setInventories(res.data))
+      .catch(() => {});
+  }, [open, mode, shopId]);
+
+  // Keep ref in sync and seed missing inventory entries into existing variant rows
+  useEffect(() => {
+    inventoriesRef.current = inventories;
+    if (inventories.length === 0) return;
+    setVariantRows((rows) =>
+      rows.map((row) => {
+        const needsUpdate = inventories.some((inv) => !(inv.id in row.invSettings));
+        if (!needsUpdate) return row;
+        const updated = { ...row.invSettings };
+        inventories.forEach((inv) => {
+          if (!(inv.id in updated)) updated[inv.id] = { availableQuantity: "0", reservedQuantity: "0", damagedQuantity: "0", reorderLevel: "", maxStockLevel: "" };
+        });
+        return { ...row, invSettings: updated };
+      }),
+    );
+  }, [inventories]);
 
   useEffect(() => {
     if (!open) return;
@@ -156,6 +195,7 @@ export function ShopItemDialog({
       setSortOrder(1);
       setLocaleRows([]);
       setVariantRows([]);
+      setInventories([]);
     }
   }, [open, mode, initial?.id]);
 
@@ -166,6 +206,7 @@ export function ShopItemDialog({
     platformItemsApi
       .get(platformItemId)
       .then((res) => {
+        setCode(res.platform_item.code);
         const locs = res.platform_item.platform_item_locales ?? [];
         if (locs.length > 0) {
           setLocaleRows(
@@ -185,14 +226,22 @@ export function ShopItemDialog({
     platformItemsApi.variants
       .list(platformItemId, { size: 50 })
       .then((res) => {
+        const invs = inventoriesRef.current;
         setVariantRows(
-          res.data.map((v) => ({
-            code: v.code,
-            sort_order: v.sort_order,
-            sku: "",
-            barcode: "",
-            quantity_value: String(v.quantity_value),
-          })),
+          res.data.map((v) => {
+            const invSettings: InvStock = {};
+            invs.forEach((inv) => {
+              invSettings[inv.id] = { availableQuantity: "0", reservedQuantity: "0", damagedQuantity: "0", reorderLevel: "", maxStockLevel: "" };
+            });
+            return {
+              code: v.code,
+              sort_order: v.sort_order,
+              sku: "",
+              barcode: "",
+              quantity_value: String(v.quantity_value),
+              invSettings,
+            };
+          }),
         );
       })
       .catch(() => {})
@@ -206,41 +255,52 @@ export function ShopItemDialog({
     setLocaleRows((rows) => rows.filter((_, idx) => idx !== i));
 
   const addRow = () =>
-    setLocaleRows((rows) => [...rows, emptyRow(rows.length)]);
+    setLocaleRows((rows) => [...rows, emptyLocaleRow(rows.length)]);
 
   const updateVariantRow = (i: number, patch: Partial<VariantRow>) =>
     setVariantRows((rows) => rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+
+  const updateVariantInvSetting = (
+    variantIdx: number,
+    invId: number,
+    patch: Partial<{ availableQuantity: string; reservedQuantity: string; damagedQuantity: string; reorderLevel: string; maxStockLevel: string }>,
+  ) =>
+    setVariantRows((rows) =>
+      rows.map((r, idx) =>
+        idx === variantIdx
+          ? { ...r, invSettings: { ...r.invSettings, [invId]: { ...r.invSettings[invId], ...patch } } }
+          : r,
+      ),
+    );
 
   const removeVariantRow = (i: number) =>
     setVariantRows((rows) => rows.filter((_, idx) => idx !== i));
 
   const addVariantRow = () =>
-    setVariantRows((rows) => [...rows, emptyVariantRow(rows.length)]);
+    setVariantRows((rows) => [...rows, makeEmptyVariantRow(rows.length, inventoriesRef.current)]);
 
   const usedLocaleIds = localeRows.map((r) => r.locale_id).filter((id) => id !== "");
   const canAddRow = !fieldsDisabled && localeRows.length < availableLocales.length;
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!code.trim()) {
-      toast.error(t("shopItem.errCode"));
-      return;
-    }
-    if (!isCustom && !platformItemId) {
-      toast.error(t("shopItem.errPlatformItem"));
-      return;
-    }
+    if (!code.trim()) { toast.error(t("shopItem.errCode")); return; }
+    if (!isCustom && !platformItemId) { toast.error(t("shopItem.errPlatformItem")); return; }
     for (let i = 0; i < localeRows.length; i++) {
       const r = localeRows[i];
       if (r.locale_id === "") { toast.error(t("shopItem.errLocaleLang", { n: i + 1 })); return; }
       if (!r.name.trim()) { toast.error(t("shopItem.errLocaleName", { n: i + 1 })); return; }
       if (!r.description.trim()) { toast.error(t("shopItem.errLocaleDesc", { n: i + 1 })); return; }
     }
-    for (let i = 0; i < variantRows.length; i++) {
-      const v = variantRows[i];
-      if (!v.code.trim()) { toast.error(t("shopItem.errVariantCode", { n: i + 1 })); return; }
-      if (v.quantity_value === "" || isNaN(Number(v.quantity_value))) {
-        toast.error(t("shopItem.errVariantQty", { n: i + 1 })); return;
+
+    if (mode === "create") {
+      if (variantRows.length === 0) { toast.error(t("shopItem.errNoVariants")); return; }
+      for (let i = 0; i < variantRows.length; i++) {
+        const v = variantRows[i];
+        if (!v.code.trim()) { toast.error(t("shopItem.errVariantCode", { n: i + 1 })); return; }
+        if (v.quantity_value === "" || isNaN(Number(v.quantity_value))) {
+          toast.error(t("shopItem.errVariantQty", { n: i + 1 })); return;
+        }
       }
     }
 
@@ -286,13 +346,28 @@ export function ShopItemDialog({
         onSaved(updated);
         onOpenChange(false);
       } else {
-        const variantPayload: ShopItemVariantInput[] = variantRows.map((v, idx) => ({
-          code: v.code.trim(),
-          sort_order: v.sort_order ?? idx + 1,
-          quantity_value: Number(v.quantity_value),
-          ...(v.sku.trim() ? { sku: v.sku.trim() } : {}),
-          ...(v.barcode.trim() ? { barcode: v.barcode.trim() } : {}),
-        }));
+        const variantPayload: ShopItemVariantInput[] = variantRows.map((v, idx) => {
+          const shopInventoryItems: ShopItemVariantInput["shop_inventory_items"] = {};
+          inventories.forEach((inv) => {
+            const s = v.invSettings[inv.id];
+            shopInventoryItems![String(inv.id)] = {
+              available_quantity: s?.availableQuantity !== "" ? parseFloat(s.availableQuantity) : 0,
+              reserved_quantity: s?.reservedQuantity !== "" ? parseFloat(s.reservedQuantity) : 0,
+              damaged_quantity: s?.damagedQuantity !== "" ? parseFloat(s.damagedQuantity) : 0,
+              reorder_level: s?.reorderLevel !== "" ? parseFloat(s.reorderLevel) : null,
+              max_stock_level: s?.maxStockLevel !== "" ? parseFloat(s.maxStockLevel) : null,
+            };
+          });
+          return {
+            code: v.code.trim(),
+            sort_order: v.sort_order ?? idx + 1,
+            quantity_value: Number(v.quantity_value),
+            ...(v.sku.trim() ? { sku: v.sku.trim() } : {}),
+            ...(v.barcode.trim() ? { barcode: v.barcode.trim() } : {}),
+            ...(inventories.length > 0 ? { shop_inventory_items: shopInventoryItems } : {}),
+          };
+        });
+
         const res = await shopItemsApi.create(shopId, {
           code: code.trim(),
           platform_item_id: pid,
@@ -304,8 +379,9 @@ export function ShopItemDialog({
             description: r.description.trim(),
             sort_order: r.sort_order ?? idx + 1,
           })),
-          variants: variantPayload.length > 0 ? variantPayload : undefined,
+          variants: variantPayload,
         });
+
         const created: ShopItem = {
           id: res.id,
           code: code.trim(),
@@ -342,7 +418,7 @@ export function ShopItemDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{t(titleKey)}</DialogTitle>
           <DialogDescription>{t(descKey)}</DialogDescription>
@@ -488,9 +564,7 @@ export function ShopItemDialog({
                                 <SelectItem
                                   key={l.id}
                                   value={String(l.id)}
-                                  disabled={
-                                    usedLocaleIds.includes(l.id) && row.locale_id !== l.id
-                                  }
+                                  disabled={usedLocaleIds.includes(l.id) && row.locale_id !== l.id}
                                 >
                                   {l.name}
                                 </SelectItem>
@@ -536,7 +610,9 @@ export function ShopItemDialog({
                   {variantRows.length > 0 && (
                     <Badge variant="secondary">{variantRows.length}</Badge>
                   )}
-                  {variantsLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+                  {variantsLoading && (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                  )}
                 </div>
                 <Button
                   type="button"
@@ -549,6 +625,7 @@ export function ShopItemDialog({
                   {t("shopItem.addVariant")}
                 </Button>
               </div>
+              <p className="text-xs text-muted-foreground">{t("shopItem.variantRequired")}</p>
 
               {variantRows.length === 0 ? (
                 <p className="rounded-md border border-dashed p-4 text-center text-sm text-muted-foreground">
@@ -557,7 +634,8 @@ export function ShopItemDialog({
               ) : (
                 <div className="space-y-3">
                   {variantRows.map((row, i) => (
-                    <div key={i} className="rounded-lg border p-3 space-y-2">
+                    <div key={i} className="rounded-lg border p-3 space-y-3">
+                      {/* Variant header */}
                       <div className="flex items-center justify-between">
                         <span className="text-xs font-medium text-muted-foreground">
                           {t("shopItem.variantRow")} {i + 1}
@@ -574,12 +652,15 @@ export function ShopItemDialog({
                         </Button>
                       </div>
 
+                      {/* Core fields */}
                       <div className="grid grid-cols-2 gap-2">
                         <div className="space-y-1">
                           <Label className="text-xs">{t("shopItem.variantCode")} *</Label>
                           <Input
                             value={row.code}
-                            onChange={(e) => updateVariantRow(i, { code: e.target.value.toUpperCase() })}
+                            onChange={(e) =>
+                              updateVariantRow(i, { code: e.target.value.toUpperCase() })
+                            }
                             disabled={fieldsDisabled}
                             className="h-8 text-xs"
                             maxLength={100}
@@ -590,7 +671,9 @@ export function ShopItemDialog({
                           <Label className="text-xs">{t("shopItem.variantQty")} *</Label>
                           <Input
                             value={row.quantity_value}
-                            onChange={(e) => updateVariantRow(i, { quantity_value: e.target.value })}
+                            onChange={(e) =>
+                              updateVariantRow(i, { quantity_value: e.target.value })
+                            }
                             disabled={fieldsDisabled}
                             className="h-8 text-xs"
                             placeholder="E.g. 250.000"
@@ -605,7 +688,9 @@ export function ShopItemDialog({
                             type="number"
                             min={1}
                             value={row.sort_order}
-                            onChange={(e) => updateVariantRow(i, { sort_order: Number(e.target.value) })}
+                            onChange={(e) =>
+                              updateVariantRow(i, { sort_order: Number(e.target.value) })
+                            }
                             disabled={fieldsDisabled}
                             className="h-8 text-xs"
                           />
@@ -631,6 +716,119 @@ export function ShopItemDialog({
                           />
                         </div>
                       </div>
+
+                      {/* Per-inventory stock settings */}
+                      {inventories.length > 0 && (
+                        <div className="space-y-2 border-t pt-2">
+                          <div className="flex items-center gap-1.5">
+                            <Warehouse className="h-3.5 w-3.5 text-muted-foreground" />
+                            <span className="text-xs font-medium text-muted-foreground">
+                              {t("shopItem.variantStock")}
+                            </span>
+                          </div>
+                          <div className="space-y-2">
+                            {inventories.map((inv) => (
+                              <div
+                                key={inv.id}
+                                className="rounded-md bg-muted/40 px-3 py-2 space-y-2"
+                              >
+                                <p className="text-[11px] font-mono font-semibold text-muted-foreground">
+                                  {inv.code}
+                                </p>
+                                <div className="grid grid-cols-3 gap-2">
+                                  <div className="space-y-1">
+                                    <Label className="text-[11px]">{t("shopInventoryItem.available")}</Label>
+                                    <Input
+                                      type="number"
+                                      min={0}
+                                      step="0.001"
+                                      value={row.invSettings[inv.id]?.availableQuantity ?? ""}
+                                      onChange={(e) =>
+                                        updateVariantInvSetting(i, inv.id, { availableQuantity: e.target.value })
+                                      }
+                                      placeholder="0"
+                                      disabled={submitting}
+                                      className="h-7 text-xs"
+                                    />
+                                  </div>
+                                  <div className="space-y-1">
+                                    <Label className="text-[11px]">{t("shopInventoryItem.reserved")}</Label>
+                                    <Input
+                                      type="number"
+                                      min={0}
+                                      step="0.001"
+                                      value={row.invSettings[inv.id]?.reservedQuantity ?? ""}
+                                      onChange={(e) =>
+                                        updateVariantInvSetting(i, inv.id, { reservedQuantity: e.target.value })
+                                      }
+                                      placeholder="0"
+                                      disabled={submitting}
+                                      className="h-7 text-xs"
+                                    />
+                                  </div>
+                                  <div className="space-y-1">
+                                    <Label className="text-[11px]">{t("shopInventoryItem.damaged")}</Label>
+                                    <Input
+                                      type="number"
+                                      min={0}
+                                      step="0.001"
+                                      value={row.invSettings[inv.id]?.damagedQuantity ?? ""}
+                                      onChange={(e) =>
+                                        updateVariantInvSetting(i, inv.id, { damagedQuantity: e.target.value })
+                                      }
+                                      placeholder="0"
+                                      disabled={submitting}
+                                      className="h-7 text-xs"
+                                    />
+                                  </div>
+                                </div>
+                                <div className="grid grid-cols-2 gap-2">
+                                  <div className="space-y-1">
+                                    <Label className="text-[11px]">
+                                      {t("shopInventoryItem.reorderLevel")}{" "}
+                                      <span className="text-muted-foreground">
+                                        {t("shopInventoryItem.optional")}
+                                      </span>
+                                    </Label>
+                                    <Input
+                                      type="number"
+                                      min={0}
+                                      step="0.001"
+                                      value={row.invSettings[inv.id]?.reorderLevel ?? ""}
+                                      onChange={(e) =>
+                                        updateVariantInvSetting(i, inv.id, { reorderLevel: e.target.value })
+                                      }
+                                      placeholder="0"
+                                      disabled={submitting}
+                                      className="h-7 text-xs"
+                                    />
+                                  </div>
+                                  <div className="space-y-1">
+                                    <Label className="text-[11px]">
+                                      {t("shopInventoryItem.maxStockLevel")}{" "}
+                                      <span className="text-muted-foreground">
+                                        {t("shopInventoryItem.optional")}
+                                      </span>
+                                    </Label>
+                                    <Input
+                                      type="number"
+                                      min={0}
+                                      step="0.001"
+                                      value={row.invSettings[inv.id]?.maxStockLevel ?? ""}
+                                      onChange={(e) =>
+                                        updateVariantInvSetting(i, inv.id, { maxStockLevel: e.target.value })
+                                      }
+                                      placeholder="0"
+                                      disabled={submitting}
+                                      className="h-7 text-xs"
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>

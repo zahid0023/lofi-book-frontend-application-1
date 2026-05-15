@@ -46,6 +46,7 @@ export default function PortalItemCategories() {
   const [presetParentId, setPresetParentId] = useState<number | undefined>(undefined);
 
   const [overviewTarget, setOverviewTarget] = useState<ShopItemCategory | null>(null);
+  const [overviewLoading, setOverviewLoading] = useState<number | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ShopItemCategory | null>(null);
 
   useEffect(() => {
@@ -59,7 +60,7 @@ export default function PortalItemCategories() {
   }, [shopId]);
 
   const localized = (c: ShopItemCategory) => {
-    const list = c.shop_item_category_locales ?? [];
+    const list = c.locales ?? [];
     return (
       list.find((l) => l.locale_id === localeId)?.name ||
       list.find((l) => l.locale_id === 1)?.name ||
@@ -69,7 +70,7 @@ export default function PortalItemCategories() {
   };
 
   const localizedDesc = (c: ShopItemCategory) => {
-    const list = c.shop_item_category_locales ?? [];
+    const list = c.locales ?? [];
     return list.find((l) => l.locale_id === localeId)?.description || list[0]?.description || "";
   };
 
@@ -133,6 +134,15 @@ export default function PortalItemCategories() {
       const exists = prev.some((c) => c.id === saved.id);
       return exists ? prev.map((c) => (c.id === saved.id ? saved : c)) : [saved, ...prev];
     });
+  };
+
+  const openOverview = (cat: ShopItemCategory) => {
+    setOverviewLoading(cat.id);
+    itemCategoriesApi
+      .get(Number(shopId), cat.id)
+      .then((res) => setOverviewTarget(res.shop_item_category))
+      .catch((err: Error) => toast.error(err.message))
+      .finally(() => setOverviewLoading(null));
   };
 
   const confirmDelete = () => {
@@ -233,7 +243,8 @@ export default function PortalItemCategories() {
                 defaultName={localized(c)}
                 defaultDescription={localizedDesc(c)}
                 subCount={subCount}
-                onOpenOverview={(cat) => setOverviewTarget(cat)}
+                overviewLoading={overviewLoading === c.id}
+                onOpenOverview={openOverview}
                 onView={(cat) => openFor(cat, "view")}
                 onEdit={(cat) => openFor(cat, "edit")}
                 onDelete={(cat) => setDeleteTarget(cat)}
@@ -259,6 +270,7 @@ export default function PortalItemCategories() {
         open={!!overviewTarget}
         onOpenChange={(o) => !o && setOverviewTarget(null)}
         category={overviewTarget}
+        shopId={Number(shopId)}
         allCategories={categories}
         onView={(c) => {
           setOverviewTarget(null);

@@ -1,5 +1,5 @@
-import { FormEvent, useEffect, useState } from "react";
-import { Languages, Loader2, Pencil, Plus, X } from "lucide-react";
+import { FormEvent, useEffect, useRef, useState } from "react";
+import { Archive, Languages, Loader2, Pencil, Plus, X } from "lucide-react";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
@@ -25,6 +25,7 @@ import {
 import { shopsApi, type Shop } from "@/services/shops";
 import { localesApi, type Locale } from "@/services/locales";
 import { shopTypesApi, type ShopType } from "@/services/shop-types";
+import { shopInventoriesApi } from "@/services/shop-inventories";
 import { resolveShopTypeName } from "@/lib/shop-type-name";
 import { useLocaleId } from "@/lib/use-locale-id";
 
@@ -32,6 +33,8 @@ import {
   type ShopDialogProps,
   type ShopLocaleRow,
   type ShopFormState,
+  type InventoryRow,
+  type InventoryLocaleRow,
 } from "./types";
 
 export function ShopDialog({
@@ -52,6 +55,20 @@ export function ShopDialog({
   const [shopTypesLoading, setShopTypesLoading] = useState(false);
   const [locales, setLocales] = useState<Locale[]>(availableLocales ?? []);
   const [submitting, setSubmitting] = useState(false);
+  const codeTouched = useRef(false);
+
+  useEffect(() => {
+    if (open && mode === "create") codeTouched.current = false;
+  }, [open, mode]);
+
+  function slugify(s: string) {
+    return s
+      .normalize("NFD")
+      .replace(/[̀-ͯ]/g, "")
+      .replace(/[^a-zA-Z0-9]+/g, "_")
+      .toUpperCase()
+      .replace(/^_+|_+$/g, "");
+  }
 
   useEffect(() => {
     if (!open) return;
@@ -94,29 +111,40 @@ export function ShopDialog({
   const lockedByType = mode === "create" && !form.shop_type_id;
   const fieldsDisabled = readOnly || lockedByType;
 
-  /** Auto-seed a locale row in the user's current language when type is first picked (create mode only). */
+  /** Auto-seed a locale row and default inventory when shop type is first picked (create mode only). */
   useEffect(() => {
     if (mode !== "create") return;
     if (!form.shop_type_id) return;
-    if (form.locales.length > 0) return;
-    const base = currentLang.toLowerCase().split("-")[0];
-    const match =
-      locales.find((l) => l.code.toLowerCase() === currentLang.toLowerCase()) ??
-      locales.find((l) => l.code.toLowerCase() === base) ??
-      locales[0];
-    if (!match) return;
-    onFormChange({
-      ...form,
-      locales: [
-        {
-          locale_id: match.id,
-          name: "",
-          description: "",
-          sort_order: 1,
-          _new: true,
-        },
-      ],
-    });
+
+    const updates: Partial<ShopFormState> = {};
+
+    if (form.locales.length === 0) {
+      const base = currentLang.toLowerCase().split("-")[0];
+      const match =
+        locales.find((l) => l.code.toLowerCase() === currentLang.toLowerCase()) ??
+        locales.find((l) => l.code.toLowerCase() === base) ??
+        locales[0];
+      if (match) {
+        updates.locales = [{ locale_id: match.id, name: "", description: "", sort_order: 1, _new: true }];
+      }
+    }
+
+    if (form.inventories.length === 0 || (form.inventories.length === 1 && form.inventories[0].locales.length === 0)) {
+      const enLocale =
+        locales.find((l) => l.code.toLowerCase() === "en") ??
+        locales.find((l) => l.code.toLowerCase().startsWith("en")) ??
+        locales[0];
+      updates.inventories = [{
+        code: "MAIN_INVENTORY",
+        locales: enLocale
+          ? [{ locale_id: enLocale.id, name: "Main Inventory", description: "Primary inventory for this shop.", sort_order: 0 }]
+          : [],
+      }];
+    }
+
+    if (Object.keys(updates).length > 0) {
+      onFormChange({ ...form, ...updates });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, form.shop_type_id]);
 
@@ -141,14 +169,63 @@ export function ShopDialog({
   };
 
   const updateLocaleRow = (idx: number, patch: Partial<ShopLocaleRow>) => {
-    onFormChange({
-      ...form,
-      locales: form.locales.map((r, i) => (i === idx ? { ...r, ...patch } : r)),
-    });
+    const updatedLocales = form.locales.map((r, i) => (i === idx ? { ...r, ...patch } : r));
+    let newCode = form.code;
+    if (mode === "create" && idx === 0 && "name" in patch && !codeTouched.current) {
+      newCode = slugify(patch.name as string);
+    }
+    onFormChange({ ...form, locales: updatedLocales, code: newCode });
   };
 
   const removeLocaleRow = (idx: number) => {
     onFormChange({ ...form, locales: form.locales.filter((_, i) => i !== idx) });
+  };
+
+  const addInventoryRow = () => {
+    onFormChange({ ...form, inventories: [...form.inventories, { code: "", locales: [] }] });
+  };
+
+  const addInventoryLocaleRow = (invIdx: number) => {
+    onFormChange({
+      ...form,
+      inventories: form.inventories.map((r, i) =>
+        i === invIdx
+          ? { ...r, locales: [...r.locales, { locale_id: "", name: "", description: "", sort_order: r.locales.length }] }
+          : r,
+      ),
+    });
+  };
+
+  const updateInventoryLocaleRow = (invIdx: number, localeIdx: number, patch: Partial<InventoryLocaleRow>) => {
+    onFormChange({
+      ...form,
+      inventories: form.inventories.map((r, i) =>
+        i === invIdx
+          ? { ...r, locales: r.locales.map((l, j) => (j === localeIdx ? { ...l, ...patch } : l)) }
+          : r,
+      ),
+    });
+  };
+
+  const removeInventoryLocaleRow = (invIdx: number, localeIdx: number) => {
+    onFormChange({
+      ...form,
+      inventories: form.inventories.map((r, i) =>
+        i === invIdx ? { ...r, locales: r.locales.filter((_, j) => j !== localeIdx) } : r,
+      ),
+    });
+  };
+
+  const updateInventoryRow = (idx: number, patch: Partial<InventoryRow>) => {
+    onFormChange({
+      ...form,
+      inventories: form.inventories.map((r, i) => (i === idx ? { ...r, ...patch } : r)),
+    });
+  };
+
+  const removeInventoryRow = (idx: number) => {
+    if (form.inventories.length <= 1) return;
+    onFormChange({ ...form, inventories: form.inventories.filter((_, i) => i !== idx) });
   };
 
   const handleSubmit = async (e: FormEvent) => {
@@ -157,6 +234,29 @@ export function ShopDialog({
     if (!form.code.trim() || !form.shop_type_id) {
       toast.error(t("createShop.errCodeType"));
       return;
+    }
+    if (mode === "create" && form.inventories.every((inv) => !inv.code.trim())) {
+      toast.error(t("createShop.errInventoryCode", "At least one inventory code is required"));
+      return;
+    }
+    if (mode === "create") {
+      for (const [i, inv] of form.inventories.entries()) {
+        if (!inv.code.trim()) continue;
+        for (const [j, locRow] of inv.locales.entries()) {
+          if (!locRow.locale_id) {
+            toast.error(t("createShop.errInventoryLocaleLang", { n: i + 1, m: j + 1 }));
+            return;
+          }
+          if (!locRow.name.trim()) {
+            toast.error(t("createShop.errInventoryLocaleName", { n: i + 1, m: j + 1 }));
+            return;
+          }
+          if (!locRow.description.trim()) {
+            toast.error(t("createShop.errInventoryLocaleDesc", { n: i + 1, m: j + 1 }));
+            return;
+          }
+        }
+      }
     }
     for (const [i, row] of form.locales.entries()) {
       if (!row.locale_id) {
@@ -209,6 +309,21 @@ export function ShopDialog({
           sort_order: row.sort_order,
         }));
         const res = await shopsApi.create({ code, shop_type_id: shopTypeId, sort_order: sortOrder, locales: localePayload });
+        for (const inv of form.inventories) {
+          if (inv.code.trim()) {
+            await shopInventoriesApi.create(res.id, {
+              code: inv.code.trim(),
+              locales: inv.locales
+                .filter((l) => l.locale_id !== "")
+                .map((l) => ({
+                  locale_id: Number(l.locale_id),
+                  name: l.name.trim(),
+                  description: l.description.trim(),
+                  sort_order: l.sort_order,
+                })),
+            });
+          }
+        }
         ({ shop } = await shopsApi.get(res.id));
         const localeNote = localePayload.length
           ? ` · ${t("createShop.translationsCount", { count: localePayload.length })}`
@@ -476,7 +591,10 @@ export function ShopDialog({
             <Input
               id="shop-code"
               value={form.code}
-              onChange={(e) => setForm({ code: e.target.value })}
+              onChange={(e) => {
+                codeTouched.current = true;
+                setForm({ code: e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "") });
+              }}
               placeholder="MAYA_BOUTIQUE"
               maxLength={50}
               required
@@ -486,6 +604,163 @@ export function ShopDialog({
               {t("createShop.shopCodeHint")}
             </p>
           </div>
+
+          {mode === "create" && (
+            <div className="space-y-3">
+              <div className="flex items-end justify-between gap-3">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <Archive className="h-4 w-4" />
+                    {t("createShop.inventories", "Inventories")}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {t("createShop.inventoriesHint", "At least one inventory is required.")}
+                  </p>
+                </div>
+                <Button type="button" variant="outline" size="sm" onClick={addInventoryRow} disabled={submitting}>
+                  <Plus className="h-4 w-4 mr-1.5" />
+                  {t("createShop.addInventory", "Add inventory")}
+                </Button>
+              </div>
+
+              <div className="space-y-3">
+                {form.inventories.map((inv, idx) => (
+                  <div key={idx} className="rounded-lg border bg-muted/30 p-3 space-y-3">
+                    <div className="flex items-center gap-2">
+                      <Input
+                        value={inv.code}
+                        onChange={(e) =>
+                          updateInventoryRow(idx, {
+                            code: e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ""),
+                          })
+                        }
+                        placeholder={t("createShop.inventoryCodePlaceholder", "E.g. MAIN_INVENTORY")}
+                        maxLength={100}
+                        disabled={submitting}
+                        className="flex-1 font-mono text-sm"
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => removeInventoryRow(idx)}
+                        disabled={submitting || form.inventories.length <= 1}
+                        className="shrink-0 text-muted-foreground hover:text-destructive"
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-muted-foreground flex items-center gap-1.5">
+                          <Languages className="h-3 w-3" />
+                          {t("createShop.inventoryLocales", "Inventory locales")}
+                        </span>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 px-2 text-xs"
+                          onClick={() => addInventoryLocaleRow(idx)}
+                          disabled={submitting || (locales.length > 0 && inv.locales.length >= locales.length)}
+                        >
+                          <Plus className="h-3 w-3 mr-1" />
+                          {t("createShop.addInventoryLocale", "Add locale")}
+                        </Button>
+                      </div>
+
+                      {inv.locales.length === 0 ? (
+                        <div className="rounded border border-dashed p-3 text-center text-xs text-muted-foreground">
+                          {t("createShop.noInventoryLocales", "No locale entries yet.")}
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          {inv.locales.map((locRow, locIdx) => {
+                            const localeMeta = locales.find((l) => l.id === locRow.locale_id);
+                            return (
+                              <div key={locIdx} className="rounded border bg-background p-2.5 space-y-2">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-xs font-medium text-muted-foreground">
+                                    {localeMeta ? `${localeMeta.name} (${localeMeta.code})` : `Locale #${locIdx + 1}`}
+                                  </span>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-6 w-6 text-muted-foreground hover:text-destructive"
+                                    onClick={() => removeInventoryLocaleRow(idx, locIdx)}
+                                    disabled={submitting}
+                                  >
+                                    <X className="h-3 w-3" />
+                                  </Button>
+                                </div>
+                                <div className="grid grid-cols-2 gap-2">
+                                  <div className="space-y-1">
+                                    <Label className="text-xs">{t("createShop.language")}</Label>
+                                    <Select
+                                      value={locRow.locale_id ? String(locRow.locale_id) : ""}
+                                      onValueChange={(v) => updateInventoryLocaleRow(idx, locIdx, { locale_id: Number(v) })}
+                                      disabled={submitting}
+                                    >
+                                      <SelectTrigger className="h-8 text-xs">
+                                        <SelectValue placeholder={t("createShop.selectLanguage")} />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        {locales.map((l) => {
+                                          const taken = inv.locales.some((r, ri) => ri !== locIdx && r.locale_id === l.id);
+                                          return (
+                                            <SelectItem key={l.id} value={String(l.id)} disabled={taken}>
+                                              {l.name} ({l.code})
+                                            </SelectItem>
+                                          );
+                                        })}
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+                                  <div className="space-y-1">
+                                    <Label className="text-xs">{t("createShop.sort")}</Label>
+                                    <Input
+                                      type="number"
+                                      className="h-8 text-xs"
+                                      value={locRow.sort_order}
+                                      onChange={(e) => updateInventoryLocaleRow(idx, locIdx, { sort_order: Number(e.target.value) })}
+                                      disabled={submitting}
+                                    />
+                                  </div>
+                                </div>
+                                <div className="space-y-1">
+                                  <Label className="text-xs">{t("createShop.name")}</Label>
+                                  <Input
+                                    className="h-8 text-xs"
+                                    value={locRow.name}
+                                    onChange={(e) => updateInventoryLocaleRow(idx, locIdx, { name: e.target.value })}
+                                    placeholder="Main Inventory"
+                                    disabled={submitting}
+                                  />
+                                </div>
+                                <div className="space-y-1">
+                                  <Label className="text-xs">{t("createShop.descriptionField")}</Label>
+                                  <Textarea
+                                    className="text-xs"
+                                    value={locRow.description}
+                                    onChange={(e) => updateInventoryLocaleRow(idx, locIdx, { description: e.target.value })}
+                                    placeholder="Primary inventory for this shop."
+                                    rows={2}
+                                    disabled={submitting}
+                                  />
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           </>
           )}
 

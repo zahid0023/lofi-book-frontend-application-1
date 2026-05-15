@@ -22,9 +22,9 @@ export function middleware(request: NextRequest) {
   }
 
   if (token && isAuthRoute) {
-    const dashboardUrl = request.nextUrl.clone();
-    dashboardUrl.pathname = "/dashboard";
-    return NextResponse.redirect(dashboardUrl);
+    const shopsUrl = request.nextUrl.clone();
+    shopsUrl.pathname = "/shops";
+    return NextResponse.redirect(shopsUrl);
   }
 
   return NextResponse.next();

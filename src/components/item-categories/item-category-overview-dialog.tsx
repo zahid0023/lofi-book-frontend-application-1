@@ -6,6 +6,7 @@ import {
   Plus,
   ChevronRight,
   Package,
+  Loader2,
 } from "lucide-react";
 import {
   Dialog,
@@ -19,12 +20,14 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ShopItemCategoryCard } from "./item-category-card";
 import { useLocaleId } from "@/lib/use-locale-id";
-import type { ShopItemCategory } from "@/services/item-categories";
+import { itemCategoriesApi, type ShopItemCategory } from "@/services/item-categories";
+import { toast } from "sonner";
 
 interface Props {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   category: ShopItemCategory | null;
+  shopId: number;
   allCategories: ShopItemCategory[];
   onView: (c: ShopItemCategory) => void;
   onEdit: (c: ShopItemCategory) => void;
@@ -36,6 +39,7 @@ export function CategoryOverviewDialog({
   open,
   onOpenChange,
   category,
+  shopId,
   allCategories,
   onView,
   onEdit,
@@ -46,6 +50,7 @@ export function CategoryOverviewDialog({
   const localeId = useLocaleId();
 
   const [stack, setStack] = useState<ShopItemCategory[]>([]);
+  const [drillLoading, setDrillLoading] = useState<number | null>(null);
 
   useEffect(() => {
     if (open && category) setStack([category]);
@@ -55,7 +60,7 @@ export function CategoryOverviewDialog({
   const current = stack[stack.length - 1] ?? null;
 
   const localized = (c: ShopItemCategory) => {
-    const list = c.shop_item_category_locales ?? [];
+    const list = c.locales ?? [];
     return (
       list.find((l) => l.locale_id === localeId)?.name ||
       list.find((l) => l.locale_id === 1)?.name ||
@@ -65,7 +70,7 @@ export function CategoryOverviewDialog({
   };
 
   const localizedDesc = (c: ShopItemCategory) => {
-    const list = c.shop_item_category_locales ?? [];
+    const list = c.locales ?? [];
     return (
       list.find((l) => l.locale_id === localeId)?.description ||
       list[0]?.description ||
@@ -81,11 +86,20 @@ export function CategoryOverviewDialog({
     [current, allCategories],
   );
 
+  const shopItems = current?.shop_items ?? [];
+
   if (!category || !current) return null;
 
-  const drillInto = (c: ShopItemCategory) => setStack((s) => [...s, c]);
-  const goBack = () =>
-    setStack((s) => (s.length > 1 ? s.slice(0, -1) : s));
+  const drillInto = (c: ShopItemCategory) => {
+    setDrillLoading(c.id);
+    itemCategoriesApi
+      .get(shopId, c.id)
+      .then((res) => setStack((s) => [...s, res.shop_item_category]))
+      .catch((err: Error) => toast.error(err.message))
+      .finally(() => setDrillLoading(null));
+  };
+
+  const goBack = () => setStack((s) => (s.length > 1 ? s.slice(0, -1) : s));
   const goTo = (i: number) => setStack((s) => s.slice(0, i + 1));
 
   return (
@@ -104,12 +118,7 @@ export function CategoryOverviewDialog({
         {/* Breadcrumb */}
         <div className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
           {stack.length > 1 && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 px-2"
-              onClick={goBack}
-            >
+            <Button variant="ghost" size="sm" className="h-7 px-2" onClick={goBack}>
               <ArrowLeft className="h-3.5 w-3.5 mr-1" />
               {t("common.back", "Back")}
             </Button>
@@ -155,9 +164,7 @@ export function CategoryOverviewDialog({
           ) : (
             <div className="grid gap-3 sm:grid-cols-2">
               {children.map((c) => {
-                const subCount = allCategories.filter(
-                  (x) => x.parent_id === c.id,
-                ).length;
+                const subCount = allCategories.filter((x) => x.parent_id === c.id).length;
                 return (
                   <ShopItemCategoryCard
                     key={c.id}
@@ -165,6 +172,7 @@ export function CategoryOverviewDialog({
                     defaultName={localized(c)}
                     defaultDescription={localizedDesc(c)}
                     subCount={subCount}
+                    overviewLoading={drillLoading === c.id}
                     onOpenOverview={drillInto}
                     onView={onView}
                     onEdit={onEdit}
@@ -176,26 +184,53 @@ export function CategoryOverviewDialog({
           )}
         </div>
 
-        {/* Assigned items (placeholder until shop-item assignments API exists) */}
+        {/* Assigned items */}
         <div className="space-y-3 border-t pt-4">
           <div className="flex items-center justify-between">
             <h4 className="text-sm font-semibold">
               {t("itemCategory.assignedItems", "Assigned items")}
               <Badge variant="secondary" className="ml-2">
-                0
+                {shopItems.length}
               </Badge>
             </h4>
-            <Button size="sm" variant="outline" disabled>
-              <Package className="h-4 w-4 mr-1.5" />
-              {t("itemCategory.manage", "Manage")}
-            </Button>
           </div>
-          <p className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
-            {t(
-              "itemCategory.noAssignedItems",
-              "No items assigned to this category.",
-            )}
-          </p>
+
+          {drillLoading !== null ? (
+            <div className="flex items-center justify-center py-6">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            </div>
+          ) : shopItems.length === 0 ? (
+            <p className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
+              {t("itemCategory.noAssignedItems", "No items assigned to this category.")}
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {shopItems.map((item) => {
+                const locale =
+                  item.shop_item_locales?.find((l) => l.locale_id === localeId) ??
+                  item.shop_item_locales?.[0];
+                return (
+                  <div
+                    key={item.id}
+                    className="flex items-center justify-between rounded-lg border px-3 py-2"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Package className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium">
+                          {locale?.name ?? item.code}
+                        </p>
+                        <p className="truncate text-xs text-muted-foreground">{item.code}</p>
+                      </div>
+                    </div>
+                    <Badge variant="outline" className="shrink-0 text-xs">
+                      #{item.id}
+                    </Badge>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         <DialogFooter>
